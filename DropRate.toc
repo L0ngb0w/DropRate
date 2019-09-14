@@ -1,0 +1,9 @@
+## Interface: 11302
+## Version: 1.0
+## Title: Drop Rate
+## Notes: Record the drop rate of items from mobs
+## Author: Bue Vedel-Larsen
+## SavedVariables: DropRate_UnitTable, DropRate_Settings
+## SavedVariablesPerCharacter: DropRate_UniqueUnitTable
+
+DropRate.lua
