@@ -1,8 +1,9 @@
 local DropRate_DEBUG = false;
 local DropRate_UNIQUE_UNIT_TIMEOUT = 60*60;
+local DropRate_UNIT_TABLE_VERSION = 2;
+local DropRate_VERSION = '_version';
 
 local DropRate_DEFAULT_SETTINGS = {
-    per_zone = true,
     minimum_quality = 1
 };
 
@@ -41,21 +42,18 @@ DropRate_PrintUnitTable = function()
         return;
     end
 
-    if DropRate_Settings['per_zone'] then
-        for zone,units in pairs(DropRate_UnitTable) do
-            print('In "'..zone..'"');
-            DropRate_PrintUnits('  ', units);
-        end
-    else
-        DropRate_PrintUnits('', DropRate_UnitTable);
-    end
+    DropRate_PrintUnits('', DropRate_UnitTable);
+end
+
+DropRate_QueryUnitTable = function(unit)
+    return DropRate_UnitTable[unit];
 end
 
 DropRate_RegisterItem = function(item, quantity, quality)
     if item == nil then
-        item = {
-            count = 0,
-            quantity = 0,
+        return {
+            count = 1,
+            quantity = quantity,
             quality = quality
         };
     end
@@ -101,16 +99,6 @@ DropRate_RegisterUnit = function(unit)
     return unit;
 end
 
-DropRate_RegisterZone = function(zone, target)
-    if zone == nil then
-        zone = {}
-    end
-
-    zone[target] = DropRate_RegisterUnit(zone[target]);
-
-    return zone;
-end
-
 DropRate_OnLootOpened = function(self, event, ...)
     DropRate_DebugPrint('DropRate_OnLootOpened');
 
@@ -138,13 +126,9 @@ DropRate_OnLootOpened = function(self, event, ...)
     end
 
     local target = UnitName('target');
+    local unit = DropRate_QueryUnitTable(target);
 
-    if DropRate_Settings['per_zone'] then
-        local zone = GetRealZoneText();
-        DropRate_UnitTable[zone] = DropRate_RegisterZone(DropRate_UnitTable[zone], target);
-    else
-        DropRate_UnitTable[target] = DropRate_RegisterUnit(DropRate_UnitTable[target]);
-    end
+    DropRate_UnitTable[target] = DropRate_RegisterUnit(unit);
 end
 
 DropRate_HookLootFrame = function()
@@ -169,21 +153,6 @@ DropRate_HookLootFrame = function()
     end
 end
 
-DropRate_QueryUnitTable = function(unit)
-    if DropRate_Settings['per_zone'] then
-        local name = GetRealZoneText();
-        local zone = DropRate_UnitTable[name];
-
-        if zone then
-            return zone[unit];
-        end
-
-        return nil
-    end
-
-    return DropRate_UnitTable[unit];
-end
-
 DropRate_GetTooltipLines = function(unit)
     local minimum_quality = DropRate_Settings['minimum_quality'];
     local lines = {}
@@ -192,9 +161,6 @@ DropRate_GetTooltipLines = function(unit)
     local found = false;
     for name,item in pairs(unit['items']) do
         local quality = item['quality'];
-        if not quality then
-            quality = 1
-        end
 
         if minimum_quality <= quality then
             local item_count = item['count'];
@@ -235,6 +201,56 @@ DropRate_SortTooltipLines = function(lines)
     end);
 end
 
+DropRate_UpgradeUnitTableFrom1To2 = function(unit_table)
+    DropRate_DebugPrint('Unit table is version 1, upgrading');
+    local new_unit_table = {
+        [DropRate_VERSION] = 2
+    };
+
+    for zone, units in pairs(unit_table) do
+        if zone ~= DropRate_VERSION then
+            for unit_name, unit in pairs(units) do
+                local new_unit = new_unit_table[unit_name];
+                if new_unit then
+                    new_unit['count'] = new_unit['count'] + unit['count'];
+
+                    for name, item in pairs(unit['items']) do
+                        local new_item = new_unit['items'][name];
+                        if new_item then
+                            new_item['count'] = new_item['count'] + item['count'];
+                            new_item['quantity'] = new_item['quantity'] + item['quantity'];
+                        else
+                            new_unit['items'][name] = item;
+                        end
+                    end
+                else
+                    new_unit_table[unit_name] = unit;
+                end
+
+                for name, item in pairs(new_unit_table[unit_name]['items']) do
+                    if not item['quality'] then
+                        new_unit_table[unit_name]['items'][name]['quality'] = 1
+                    end
+                end
+            end
+        end
+    end
+
+    return new_unit_table;
+end
+
+DropRate_VerifyUnitTable = function()
+    while true do
+        local version = DropRate_UnitTable[DropRate_VERSION];
+        if version == DropRate_UNIT_TABLE_VERSION then
+            DropRate_DebugPrint('Unit table is latest version');
+            return;
+        elseif not version or version == 1 then
+            DropRate_UnitTable = DropRate_UpgradeUnitTableFrom1To2(DropRate_UnitTable);
+        end
+    end
+end
+
 DropRate_DebugPrint('In DropRate!');
 local DropRate_Frame = CreateFrame('Frame');
 DropRate_Frame:RegisterEvent('ADDON_LOADED');
@@ -257,10 +273,11 @@ DropRate_Frame:SetScript('OnEvent', function(self, event, arg1, arg2)
         if DropRate_UnitTable == nil then
             DropRate_DebugPrint('Creating persisted table DropRate_UnitTable');
             DropRate_UnitTable = {
-                version = 1
+                [DropRate_VERSION] = DropRate_UNIT_TABLE_VERSION;
             };
         else
             -- Check version and upgrade
+            DropRate_VerifyUnitTable();
         end
 
         if DropRate_UniqueUnitTable == nil then
@@ -282,7 +299,7 @@ DropRate_Frame:SetScript('OnEvent', function(self, event, arg1, arg2)
     end
 end)
 
-GameTooltip:HookScript("OnTooltipSetUnit", function(tt)
+GameTooltip:HookScript('OnTooltipSetUnit', function(tt)
     local target = tt:GetUnit();
     local unit = DropRate_QueryUnitTable(target)
 
